@@ -87,15 +87,24 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const setupMediaStream = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setLocalStream(stream);
+      // ভিডিও এবং অডিও চাওয়া
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 1280, height: 720 }, // HD কোয়ালিটি ফোর্স করা
+        audio: true 
+      });
+      
+      setLocalStream(stream); // লোকাল স্টেট আপডেট
+      setIsVideoOff(false);   // ভিডিও অন মার্ক করা
+      setIsMuted(false);      // মিউট অফ মার্ক করা
+      
       return stream;
     } catch (error) {
       console.error('Media Access Error:', error);
       try {
+        // ভিডিও না পেলে শুধু অডিও চেষ্টা করা
         const audioStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
         setLocalStream(audioStream);
-        setIsVideoOff(true);
+        setIsVideoOff(true); // ভিডিও নেই
         return audioStream;
       } catch (err) {
         console.error('No audio/video permissions');

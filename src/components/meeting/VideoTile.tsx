@@ -27,101 +27,103 @@ const VideoTile: React.FC<VideoTileProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [showMenu, setShowMenu] = useState(false);
+  const [videoActive, setVideoActive] = useState(false);
 
+  // ভিডিও স্ট্রিম হ্যান্ডেল করা (Black Screen Fix)
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+    const videoEl = videoRef.current;
+    if (videoEl && stream) {
+      videoEl.srcObject = stream;
+      
+      // ভিডিও লোড হওয়ার জন্য অপেক্ষা করা
+      videoEl.onloadedmetadata = async () => {
+        try {
+          await videoEl.play();
+          setVideoActive(true);
+        } catch (err) {
+          console.error("Video play failed:", err);
+        }
+      };
+    } else {
+      setVideoActive(false);
     }
   }, [stream]);
 
-  const hasVideo = stream?.getVideoTracks().some(track => track.enabled);
-
-  // --- FIX START: নামের সেফটি চেক ---
-  // যদি participant.display_name না থাকে, তবে 'Guest' দেখাবে। এতে অ্যাপ আর ক্রাশ করবে না।
+  // নামের সেফটি চেক
   const displayName = participant?.display_name || (participant as any)?.name || 'Guest';
-  // --- FIX END ---
+  
+  // ভিডিও ট্র্যাক আছে কিনা এবং চালু আছে কিনা চেক করা
+  const hasVideoTrack = stream?.getVideoTracks().length! > 0 && !participant.is_video_off;
 
   return (
     <div
-      className={`relative bg-gray-900 dark:bg-gray-800 rounded-xl overflow-hidden aspect-video transition-all duration-300 ${
+      className={`relative bg-gray-900 dark:bg-gray-800 rounded-xl overflow-hidden aspect-video transition-all duration-300 shadow-lg ${
         isSpeaking ? 'ring-4 ring-green-500' : ''
       } ${isScreenShare ? 'col-span-2 row-span-2' : ''}`}
     >
-      {stream && hasVideo ? (
+      {/* Video Player */}
+      {hasVideoTrack ? (
         <video
           ref={videoRef}
           autoPlay
-          playsInline
-          muted={isLocal}
-          className={`w-full h-full object-cover ${isLocal ? 'transform scale-x-[-1]' : ''}`}
+          playsInline // মোবাইলের জন্য খুব জরুরি
+          muted={isLocal} // নিজের অডিও মিউট রাখা
+          className={`w-full h-full object-cover transition-opacity duration-500 ${
+            videoActive ? 'opacity-100' : 'opacity-0'
+          } ${isLocal && !isScreenShare ? 'transform scale-x-[-1]' : ''}`}
         />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-600 to-purple-700">
-          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-white/20 flex items-center justify-center text-white text-2xl sm:text-3xl font-bold">
-            {/* এখানে আমরা displayName ভেরিয়েবল ব্যবহার করছি */}
-            {displayName.charAt(0)?.toUpperCase() || 'G'}
+      ) : null}
+
+      {/* Fallback Avatar (যদি ভিডিও না থাকে বা লোড না হয়) */}
+      {(!hasVideoTrack || !videoActive) && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-900 to-gray-900">
+          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-3xl font-bold shadow-xl animate-pulse-slow">
+            {displayName.charAt(0)?.toUpperCase() || 'U'}
           </div>
         </div>
       )}
 
-      {/* Overlay gradient */}
-      <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/70 to-transparent" />
+      {/* Overlay Gradient */}
+      <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 via-black/40 to-transparent pointer-events-none" />
 
-      {/* Name and status */}
-      <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-white text-sm font-medium truncate max-w-[120px] sm:max-w-[200px]">
-            {/* এখানেও displayName ব্যবহার করা হয়েছে */}
+      {/* Name and Status */}
+      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between z-10">
+        <div className="flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10">
+          <span className="text-white text-sm font-semibold truncate max-w-[120px] sm:max-w-[180px] drop-shadow-sm">
             {displayName}
             {isLocal && ' (You)'}
-            {isHost && !isLocal && ' (Host)'}
           </span>
           {participant.is_muted && (
-            <span className="p-1 bg-red-500/80 rounded-full">
-              <MicOffIcon size={12} className="text-white" />
-            </span>
+            <MicOffIcon size={14} className="text-red-400" />
           )}
         </div>
       </div>
 
-      {/* Video off indicator */}
-      {participant.is_video_off && (
-        <div className="absolute top-2 right-2 p-1.5 bg-gray-800/80 rounded-full">
-          <VideoOffIcon size={16} className="text-white" />
-        </div>
-      )}
-
-      {/* Host controls menu */}
+      {/* Host Controls */}
       {canManage && !isLocal && (
-        <div className="absolute top-2 right-2">
+        <div className="absolute top-3 right-3 z-20">
           <button
-            onClick={() => setShowMenu(!showMenu)}
-            className="p-1.5 bg-gray-800/80 rounded-full hover:bg-gray-700/80 transition-colors"
+            onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+            className="p-2 bg-black/40 hover:bg-black/60 backdrop-blur-md rounded-full text-white transition-all border border-white/10"
           >
-            <MoreVerticalIcon size={16} className="text-white" />
+            <MoreVerticalIcon size={18} />
           </button>
 
           {showMenu && (
-            <div className="absolute top-full right-0 mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg py-1 min-w-[140px] z-10">
+            <div className="absolute top-full right-0 mt-2 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 min-w-[140px] overflow-hidden">
               <button
-                onClick={() => {
-                  onMute?.();
-                  setShowMenu(false);
-                }}
-                className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                onClick={() => { onMute?.(); setShowMenu(false); }}
+                className="w-full px-4 py-2.5 text-left text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2 transition-colors"
               >
                 <VolumeXIcon size={16} />
                 Mute
               </button>
               <button
-                onClick={() => {
-                  onKick?.();
-                  setShowMenu(false);
-                }}
-                className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                onClick={() => { onKick?.(); setShowMenu(false); }}
+                className="w-full px-4 py-2.5 text-left text-sm text-red-400 hover:bg-red-900/20 flex items-center gap-2 transition-colors"
               >
                 <UserMinusIcon size={16} />
-                Remove
+                Kick
               </button>
             </div>
           )}
