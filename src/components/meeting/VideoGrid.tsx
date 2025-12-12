@@ -12,12 +12,14 @@ const VideoGrid: React.FC = () => {
     meeting,
     kickParticipant,
     muteParticipant,
+    remoteStreams, // নতুন: রিমোট স্ট্রিম রিসিভ করা হলো
   } = useMeeting();
 
+  // Active Participants
   const activeParticipants = participants.filter(p => !p.left_at);
   const isHost = meeting?.host_id === currentUser?.id;
 
-  // Calculate grid layout based on participant count
+  // Grid Layout Calculation
   const gridClass = useMemo(() => {
     const count = activeParticipants.length + (isScreenSharing ? 1 : 0);
     if (count === 1) return 'grid-cols-1';
@@ -28,13 +30,14 @@ const VideoGrid: React.FC = () => {
     return 'grid-cols-3 sm:grid-cols-4';
   }, [activeParticipants.length, isScreenSharing]);
 
-  // Find current user's participant record
+  // Current User Data
   const currentParticipant = activeParticipants.find(p => p.user_id === currentUser?.id);
 
   return (
     <div className="h-full w-full p-4 pb-32 overflow-y-auto">
       <div className={`grid ${gridClass} gap-3 sm:gap-4 auto-rows-fr max-w-7xl mx-auto`}>
-        {/* Screen share tile (if active) */}
+        
+        {/* 1. Screen Share Tile */}
         {isScreenSharing && screenStream && (
           <VideoTile
             participant={{
@@ -52,7 +55,7 @@ const VideoGrid: React.FC = () => {
           />
         )}
 
-        {/* Local user tile */}
+        {/* 2. Local User Tile */}
         {currentParticipant && (
           <VideoTile
             participant={currentParticipant}
@@ -62,23 +65,28 @@ const VideoGrid: React.FC = () => {
           />
         )}
 
-        {/* Other participants */}
+        {/* 3. Remote Participants Tiles */}
         {activeParticipants
           .filter(p => p.user_id !== currentUser?.id)
-          .map((participant) => (
-            <VideoTile
-              key={participant.id}
-              participant={participant}
-              stream={null} // In a real app, you'd get the remote stream via WebRTC
-              isHost={participant.user_id === meeting?.host_id}
-              canManage={isHost}
-              onKick={() => kickParticipant(participant.id)}
-              onMute={() => muteParticipant(participant.id)}
-            />
-          ))}
+          .map((participant) => {
+            // FIX: এখানে আসল রিমোট ভিডিও স্ট্রিমটি খুঁজে নেওয়া হচ্ছে
+            const remoteStream = remoteStreams.get(participant.user_id) || null;
+
+            return (
+              <VideoTile
+                key={participant.id}
+                participant={participant}
+                stream={remoteStream} // FIX: এখানে আগে null ছিল, এখন real stream যাচ্ছে
+                isHost={participant.user_id === meeting?.host_id}
+                canManage={isHost}
+                onKick={() => kickParticipant(participant.id)}
+                onMute={() => muteParticipant(participant.id)}
+              />
+            );
+          })}
       </div>
 
-      {/* Empty state */}
+      {/* Empty State */}
       {activeParticipants.length === 0 && (
         <div className="flex items-center justify-center h-full">
           <div className="text-center text-gray-500 dark:text-gray-400">

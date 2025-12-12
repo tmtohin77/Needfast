@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { User, Meeting, Participant, ChatMessage, MeetingState } from '@/types/meeting';
 import { useWebRTC } from '@/hooks/useWebRTC';
 
+// Interface Update: remoteStreams যোগ করা হয়েছে
 interface MeetingContextType extends MeetingState {
   currentUser: User | null;
   setCurrentUser: (user: User | null) => void;
@@ -21,6 +22,7 @@ interface MeetingContextType extends MeetingState {
   lockMeeting: () => Promise<void>;
   isDarkMode: boolean;
   toggleDarkMode: () => void;
+  remoteStreams: Map<string, MediaStream>; // নতুন: ভিডিও স্টোরেজ
 }
 
 const MeetingContext = createContext<MeetingContextType | undefined>(undefined);
@@ -46,23 +48,37 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  
+  // নতুন: রিমোট স্ট্রিম রাখার স্টেট
+  const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
 
   const subscriptionRef = useRef<any>(null);
 
-  // WebRTC Hook Integration
+  // WebRTC Hook Integration (Updated)
   const { 
     joinMeeting: joinWebRTC, 
     leaveMeeting: leaveWebRTC,
-    replaceTrack // ভিডিও টগল ফিক্স করার জন্য নতুন ফাংশন
+    replaceTrack 
   } = useWebRTC({
     meetingId: meeting?.id || '',
     userId: currentUser?.id || '',
     localStream: isScreenSharing ? screenStream : localStream,
+    
+    // FIX: ভিডিও আসলে এখানে জমা হবে
     onRemoteStream: (userId, stream) => {
-      // Remote stream handled by VideoGrid
+      setRemoteStreams(prev => {
+        const newMap = new Map(prev);
+        newMap.set(userId, stream);
+        return newMap;
+      });
     },
+    // FIX: কেউ চলে গেলে ভিডিও ডিলিট হবে
     onPeerDisconnected: (userId) => {
-      // Handled by realtime
+      setRemoteStreams(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(userId);
+        return newMap;
+      });
     }
   });
 
@@ -87,24 +103,20 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const setupMediaStream = async () => {
     try {
-      // ভিডিও এবং অডিও চাওয়া
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 1280, height: 720 }, // HD কোয়ালিটি ফোর্স করা
+        video: { width: 1280, height: 720 },
         audio: true 
       });
-      
-      setLocalStream(stream); // লোকাল স্টেট আপডেট
-      setIsVideoOff(false);   // ভিডিও অন মার্ক করা
-      setIsMuted(false);      // মিউট অফ মার্ক করা
-      
+      setLocalStream(stream);
+      setIsVideoOff(false);
+      setIsMuted(false);
       return stream;
     } catch (error) {
       console.error('Media Access Error:', error);
       try {
-        // ভিডিও না পেলে শুধু অডিও চেষ্টা করা
         const audioStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
         setLocalStream(audioStream);
-        setIsVideoOff(true); // ভিডিও নেই
+        setIsVideoOff(true);
         return audioStream;
       } catch (err) {
         console.error('No audio/video permissions');
@@ -113,31 +125,24 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // --- FIX: REALTIME SUBSCRIPTION (Join/Leave Sync Fix) ---
   const subscribeToMeeting = (meetingId: string) => {
     if (subscriptionRef.current) supabase.removeChannel(subscriptionRef.current);
 
     const channel = supabase.channel(`room:${meetingId}`)
       .on('postgres_changes', {
-        event: '*', // INSERT, UPDATE, DELETE সব ধরবে
+        event: '*',
         schema: 'public',
         table: 'meeting_participants',
         filter: `meeting_id=eq.${meetingId}`,
       }, (payload) => {
-        
         if (payload.eventType === 'INSERT') {
-          // কেউ নতুন জয়েন করলে
           setParticipants(prev => {
             if (prev.find(p => p.id === payload.new.id)) return prev;
-            // বাম পাশের লিস্টে যাতে ডুপ্লিকেট না হয়
             return [...prev, payload.new as Participant];
           });
-        } 
-        else if (payload.eventType === 'UPDATE') {
-          // কারো স্ট্যাটাস আপডেট হলে বা লিভ নিলে
+        } else if (payload.eventType === 'UPDATE') {
           setParticipants(prev => {
             const updated = payload.new as Participant;
-            // FIX: যদি left_at থাকে, মানে সে লিভ নিয়েছে -> লিস্ট থেকে রিমুভ করো
             if (updated.left_at) {
               return prev.filter(p => p.id !== updated.id);
             }
@@ -169,7 +174,6 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (meetingData.is_locked) return false;
 
     let user = currentUser;
-    // FIX: Host Name সঠিকভাবে নেওয়া
     const finalName = displayNameInput || currentUser?.display_name || 'Guest';
 
     if (!user) {
@@ -183,7 +187,6 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setCurrentUser(newUser);
       }
     } else {
-        // যদি ইউজার থাকে কিন্তু নাম আপডেট করতে হয়
         if (user.display_name !== finalName) {
            await supabase.from('users').update({ display_name: finalName }).eq('id', user.id);
            user.display_name = finalName;
@@ -192,7 +195,6 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     if (!user) return false;
 
-    // চেক করা ইউজার অলরেডি আছে কিনা
     const { data: existing } = await supabase
         .from('meeting_participants')
         .select('*')
@@ -205,7 +207,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         await supabase.from('meeting_participants').insert({
             meeting_id: meetingData.id,
             user_id: user.id,
-            display_name: finalName, // DB-তে নাম পাঠানো হচ্ছে
+            display_name: finalName,
             is_host: meetingData.host_id === user.id,
             joined_at: new Date().toISOString()
         });
@@ -214,12 +216,11 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     await setupMediaStream();
     setMeeting(meetingData);
     
-    // ডাটা লোড করা
     const { data: pData } = await supabase
       .from('meeting_participants')
       .select('*')
       .eq('meeting_id', meetingData.id)
-      .is('left_at', null); // শুধু যারা একটিভ আছে
+      .is('left_at', null);
     
     if (pData) setParticipants(pData);
 
@@ -232,7 +233,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (mData) setMessages(mData);
 
     subscribeToMeeting(meetingData.id);
-    await joinWebRTC(); // WebRTC কানেকশন শুরু
+    await joinWebRTC();
 
     return true;
   }, [currentUser]);
@@ -254,7 +255,6 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const leaveMeeting = useCallback(async () => {
     if (meeting && currentUser) {
-      // FIX: Leave Sync - left_at আপডেট করা
       await supabase
         .from('meeting_participants')
         .update({ left_at: new Date().toISOString() })
@@ -273,16 +273,15 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setMessages([]);
     setLocalStream(null);
     setIsScreenSharing(false);
+    setRemoteStreams(new Map()); // Reset streams
   }, [meeting, currentUser, localStream, screenStream]);
 
-  // --- FIX: Video Toggle Black Screen ---
   const toggleMute = useCallback(() => {
     if (localStream) {
         const audioTrack = localStream.getAudioTracks()[0];
         if (audioTrack) {
             audioTrack.enabled = !audioTrack.enabled;
             setIsMuted(!audioTrack.enabled);
-            // WebRTC তেও আপডেট পাঠানো
             replaceTrack(audioTrack); 
             
             if(meeting && currentUser) {
@@ -301,7 +300,6 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (videoTrack) {
             videoTrack.enabled = !videoTrack.enabled;
             setIsVideoOff(!videoTrack.enabled);
-            // WebRTC তেও আপডেট পাঠানো
             replaceTrack(videoTrack);
 
             if(meeting && currentUser) {
@@ -316,15 +314,12 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const toggleScreenShare = useCallback(async () => {
     if (isScreenSharing && screenStream) {
-      // স্ক্রিন শেয়ার বন্ধ -> ক্যামেরায় ফিরে যাওয়া
       screenStream.getTracks().forEach(t => t.stop());
       setScreenStream(null);
       setIsScreenSharing(false);
       
-      // ক্যামেরা আবার চালু করা
       const cam = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
       setLocalStream(cam);
-      // ভিডিও ট্র্যাক রিপ্লেস করা
       const videoTrack = cam.getVideoTracks()[0];
       replaceTrack(videoTrack);
 
@@ -333,7 +328,6 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         setScreenStream(stream);
         setIsScreenSharing(true);
-        // স্ক্রিন শেয়ারের ভিডিও ট্র্যাক পাঠানো
         const screenTrack = stream.getVideoTracks()[0];
         replaceTrack(screenTrack);
         
@@ -350,9 +344,23 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const toggleChat = () => { setIsChatOpen(p => !p); if(!isChatOpen) setIsParticipantsOpen(false); };
   const toggleParticipants = () => { setIsParticipantsOpen(p => !p); if(!isParticipantsOpen) setIsChatOpen(false); };
-  const sendMessage = async (msg: string, file?: File) => { /* Same as before */ }; // Keeping existing logic
+  const sendMessage = async (message: string, file?: File) => {
+    if (!meeting || !currentUser) return;
+    let fileUrl = null, fileName = null, fileType = null;
+    if (file) {
+      const filePath = `${meeting.id}/${Date.now()}_${file.name}`;
+      const { data, error } = await supabase.storage.from('meeting-files').upload(filePath, file);
+      if (!error && data) {
+        const { data: urlData } = supabase.storage.from('meeting-files').getPublicUrl(filePath);
+        fileUrl = urlData.publicUrl; fileName = file.name; fileType = file.type;
+      }
+    }
+    await supabase.from('chat_messages').insert({
+      meeting_id: meeting.id, user_id: currentUser.id, sender_name: currentUser.display_name,
+      message: message || '', file_url: fileUrl, file_name: fileName, file_type: fileType
+    });
+  };
   
-  // Shortened for brevity since logic is same
   const kickParticipant = async (pid: string) => { await supabase.from('meeting_participants').update({ left_at: new Date().toISOString() }).eq('id', pid); };
   const muteParticipant = async (pid: string) => { await supabase.from('meeting_participants').update({ is_muted: true }).eq('id', pid); };
   const muteAll = async () => { if(meeting) await supabase.from('meeting_participants').update({ is_muted: true }).eq('meeting_id', meeting.id).neq('user_id', currentUser?.id); };
@@ -365,7 +373,8 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       isChatOpen, isParticipantsOpen, isDarkMode, toggleDarkMode,
       createMeeting, joinMeeting, leaveMeeting, toggleMute, toggleVideo,
       toggleScreenShare, toggleChat, toggleParticipants, sendMessage,
-      kickParticipant, muteParticipant, muteAll, lockMeeting
+      kickParticipant, muteParticipant, muteAll, lockMeeting,
+      remoteStreams // Exporting streams
     }}>
       {children}
     </MeetingContext.Provider>
