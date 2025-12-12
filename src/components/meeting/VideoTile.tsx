@@ -7,7 +7,6 @@ interface VideoTileProps {
   stream?: MediaStream | null;
   isLocal?: boolean;
   isScreenShare?: boolean;
-  // অন্যান্য প্রপস (isHost, onKick ইত্যাদি) দরকার হলে রাখতে পারেন
   [key: string]: any; 
 }
 
@@ -15,14 +14,18 @@ const VideoTile: React.FC<VideoTileProps> = ({ participant, stream, isLocal, isS
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      // ভিডিও প্লে করার ফোর্স কমান্ড
-      videoRef.current.play().catch(e => console.error("Play error:", e));
+    const videoEl = videoRef.current;
+    if (videoEl && stream) {
+      videoEl.srcObject = stream;
+      // খুব গুরুত্বপূর্ণ: ভিডিও লোড হওয়ার সাথে সাথে প্লে করা
+      videoEl.onloadedmetadata = () => {
+        videoEl.play().catch(e => console.error("Auto-play failed:", e));
+      };
     }
   }, [stream]);
 
   const name = participant.display_name || 'Guest';
+  // ভিডিও আছে কিনা চেক করা (ভিডিও অফ থাকলেও যাতে ট্র্যাক থাকে)
   const hasVideo = stream && stream.getVideoTracks().length > 0 && !participant.is_video_off;
 
   return (
@@ -31,8 +34,8 @@ const VideoTile: React.FC<VideoTileProps> = ({ participant, stream, isLocal, isS
         <video
           ref={videoRef}
           autoPlay
-          playsInline
-          muted={isLocal} // নিজের অডিও মিউট
+          playsInline // মোবাইলের জন্য দরকারি
+          muted={isLocal} // নিজের অডিও যাতে নিজেকেই ডিস্টার্ব না করে
           className={`w-full h-full object-cover ${isLocal && !isScreenShare ? 'scale-x-[-1]' : ''}`}
         />
       ) : (
@@ -44,8 +47,10 @@ const VideoTile: React.FC<VideoTileProps> = ({ participant, stream, isLocal, isS
       )}
 
       {/* Info Bar */}
-      <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 rounded text-white text-sm flex items-center gap-2">
-        <span>{name} {isLocal && '(You)'}</span>
+      <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 rounded-lg text-white text-sm flex items-center gap-2 backdrop-blur-sm">
+        <span className="font-medium truncate max-w-[150px]">
+          {name} {isLocal && '(You)'}
+        </span>
         {participant.is_muted && <MicOffIcon size={14} className="text-red-500" />}
       </div>
     </div>

@@ -41,16 +41,28 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  
+  // ভিডিও রাখার মেইন স্টোরেজ
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const subscriptionRef = useRef<any>(null);
 
-  // WebRTC Hook
+  // WebRTC Hook Integration
   const { joinMeeting: joinWebRTC, leaveMeeting: leaveWebRTC, replaceTrack } = useWebRTC({
     meetingId: meeting?.id || '',
     userId: currentUser?.id || '',
     localStream: isScreenSharing ? screenStream : localStream,
-    onRemoteStream: (uid, stream) => setRemoteStreams(prev => new Map(prev).set(uid, stream)),
-    onPeerDisconnected: (uid) => setRemoteStreams(prev => { const n = new Map(prev); n.delete(uid); return n; })
+    // ভিডিও আসলে এখানে সেভ হবে
+    onRemoteStream: (uid, stream) => {
+      setRemoteStreams(prev => new Map(prev.set(uid, stream)));
+    },
+    // কেউ গেলে ভিডিও ডিলিট হবে
+    onPeerDisconnected: (uid) => {
+      setRemoteStreams(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(uid);
+        return newMap;
+      });
+    }
   });
 
   useEffect(() => {
@@ -150,12 +162,12 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setMeeting(null); setParticipants([]); setMessages([]); setLocalStream(null); setIsScreenSharing(false); setRemoteStreams(new Map());
   }, [meeting, currentUser, localStream, screenStream]);
 
-  // Controls Logic
   const toggleMute = () => {
     if (localStream) {
         const track = localStream.getAudioTracks()[0];
         track.enabled = !track.enabled;
         setIsMuted(!track.enabled);
+        replaceTrack(track); // WebRTC update
         if(meeting && currentUser) supabase.from('meeting_participants').update({ is_muted: !track.enabled }).eq('meeting_id', meeting.id).eq('user_id', currentUser.id).then();
     }
   };
@@ -165,6 +177,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const track = localStream.getVideoTracks()[0];
         track.enabled = !track.enabled;
         setIsVideoOff(!track.enabled);
+        replaceTrack(track); // WebRTC update
         if(meeting && currentUser) supabase.from('meeting_participants').update({ is_video_off: !track.enabled }).eq('meeting_id', meeting.id).eq('user_id', currentUser.id).then();
     }
   };
@@ -182,6 +195,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setScreenStream(stream); setIsScreenSharing(true);
         const track = stream.getVideoTracks()[0];
         replaceTrack(track);
+        // স্ক্রিন শেয়ার বন্ধ করলে অটোমেটিক ক্যামেরায় ফেরা
         track.onended = async () => {
             setScreenStream(null); setIsScreenSharing(false);
             const cam = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
@@ -202,10 +216,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     await supabase.from('chat_messages').insert({ meeting_id: meeting.id, user_id: currentUser.id, sender_name: currentUser.display_name, message: msg || '', file_url: url, file_name: name, file_type: type });
   };
-
-  // Other simple toggles
-  const toggleChat = () => { setIsChatOpen(p => !p); if(!isChatOpen) setIsParticipantsOpen(false); };
-  const toggleParticipants = () => { setIsParticipantsOpen(p => !p); if(!isParticipantsOpen) setIsChatOpen(false); };
+  
   const kickParticipant = async (pid: string) => { await supabase.from('meeting_participants').update({ left_at: new Date().toISOString() }).eq('id', pid); };
   const muteParticipant = async (pid: string) => { await supabase.from('meeting_participants').update({ is_muted: true }).eq('id', pid); };
   const muteAll = async () => { if(meeting) await supabase.from('meeting_participants').update({ is_muted: true }).eq('meeting_id', meeting.id).neq('user_id', currentUser?.id); };
